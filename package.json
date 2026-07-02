@@ -1,0 +1,123 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Instrument Serif", ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 24px;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-ink: var(--ink);
+  --color-surface: var(--surface);
+  --color-subtle: var(--subtle);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-ok: var(--ok);
+}
+
+:root {
+  
+
+  /* Calm, near-monochrome palette. One warm accent used sparingly. */
+  --background: oklch(0.995 0.002 90);        /* off-white */
+  --foreground: oklch(0.24 0.01 260);         /* near-black ink */
+
+  --surface: oklch(0.982 0.003 90);           /* sidebar / panels */
+  --subtle:  oklch(0.965 0.004 90);           /* input rows */
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.24 0.01 260);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.24 0.01 260);
+
+  --primary: oklch(0.24 0.01 260);
+  --primary-foreground: oklch(0.995 0.002 90);
+  --secondary: oklch(0.965 0.004 90);
+  --secondary-foreground: oklch(0.24 0.01 260);
+  --muted: oklch(0.965 0.004 90);
+  --muted-foreground: oklch(0.52 0.01 260);
+  --accent: oklch(0.955 0.005 90);
+  --accent-foreground: oklch(0.24 0.01 260);
+  --destructive: oklch(0.58 0.16 27);
+  --destructive-foreground: oklch(0.995 0.002 90);
+  --border: oklch(0.905 0.005 90);            /* 1px hairline */
+  --input: oklch(0.905 0.005 90);
+  --ring: oklch(0.75 0.02 260);
+
+  --ink: oklch(0.24 0.01 260);
+  --accent-ink:  oklch(0.52 0.14 30);         /* muted terracotta */
+  --accent-soft: oklch(0.965 0.02 30);
+  --ok: oklch(0.50 0.08 160);
+
+  --sidebar: oklch(0.982 0.003 90);
+  --sidebar-foreground: oklch(0.24 0.01 260);
+  --sidebar-primary: oklch(0.24 0.01 260);
+  --sidebar-primary-foreground: oklch(0.995 0.002 90);
+  --sidebar-accent: oklch(0.955 0.005 90);
+  --sidebar-accent-foreground: oklch(0.24 0.01 260);
+  --sidebar-border: oklch(0.905 0.005 90);
+  --sidebar-ring: oklch(0.75 0.02 260);
+}
+
+@layer base {
+  * { border-color: var(--color-border); border-width: 0; }
+  html, body { height: 100%; }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+
+@utility font-serif-display {
+  font-family: var(--font-serif);
+  letter-spacing: -0.01em;
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar { width: 0; height: 0; display: none; }
+}
+
+
+/* Warm editorial gradient backdrop for the chat canvas.
+   Soft cream → peach → blush wash with a subtle terracotta glow, matching the palette. */
+@utility chat-canvas {
+  background-color: oklch(0.985 0.008 60);
+  background-image:
+    radial-gradient(120% 60% at 15% 0%, oklch(0.97 0.035 55 / 0.9) 0%, transparent 60%),
+    radial-gradient(90% 55% at 100% 20%, oklch(0.94 0.045 30 / 0.55) 0%, transparent 65%),
+    radial-gradient(80% 60% at 50% 110%, oklch(0.93 0.05 20 / 0.5) 0%, transparent 70%),
+    linear-gradient(180deg, oklch(0.99 0.006 80) 0%, oklch(0.965 0.02 40) 100%);
+}

@@ -1,0 +1,1053 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import {
+  Search, Send, X, ArrowDown, ArrowLeft, Mic,
+  Plus, Settings, Sliders, BellOff, MoreHorizontal, LogOut, BookOpen,
+  PanelLeftClose, PanelLeftOpen,
+} from "lucide-react";
+import { useIsMobile } from "@/hooks/use-mobile";
+
+import avSofia from "@/assets/av-sofia.jpg";
+import avHiro from "@/assets/av-hiro.jpg";
+import avAmelie from "@/assets/av-amelie.jpg";
+import avLuca from "@/assets/av-luca.jpg";
+import avMia from "@/assets/av-mia.jpg";
+import avKlaus from "@/assets/av-klaus.jpg";
+import avMei from "@/assets/av-mei.jpg";
+import avMe from "@/assets/av-me.jpg";
+
+export const Route = createFileRoute("/")({
+  component: Index,
+});
+
+// ---------- Types ----------
+type Persona = {
+  id: string; name: string; role: string; lang: string;
+  avatar: string; online?: boolean;
+  unread?: number; muted?: boolean;
+  lastText: string; lastTime: string;
+  // per-chat settings
+  level: "A1" | "A2" | "B1" | "B2" | "C1";
+  correctionMode: "strict" | "balanced" | "gentle";
+  tone: "formal" | "neutral" | "casual";
+};
+
+type Msg = {
+  id: string; from: "user" | "persona"; text: string; time: string; hasError?: boolean;
+};
+
+type CorrectorCard = {
+  id: string; msgId: string; status: "errors" | "clean";
+  original: string;
+  corrected?: { parts: Array<{ t: string; kind?: "del" | "add" | "same" }> };
+  notes?: Array<{ n: number; title: string; body: string; example: string }>;
+};
+
+// ---------- Mock data ----------
+const initialPersonas: Persona[] = [
+  { id: "sofia",  name: "Sofía Márquez",   role: "Барista, Мадрид",       lang: "Español",  avatar: avSofia,  online: true, unread: 2, lastText: "¡Vale! Entonces mañana a las nueve, ¿te parece?", lastTime: "14:22", level: "B1", correctionMode: "balanced", tone: "casual" },
+  { id: "hiro",   name: "Hiroshi Tanaka",  role: "Инженер, Осака",        lang: "日本語",     avatar: avHiro,   online: true,          lastText: "今日はどんな一日でしたか？",                            lastTime: "13:04", level: "A2", correctionMode: "strict",   tone: "formal" },
+  { id: "amelie", name: "Amélie Rousseau", role: "Художница, Лион",       lang: "Français", avatar: avAmelie, unread: 5,             lastText: "Tu as vu l'exposition dont je te parlais ?",          lastTime: "вчера", level: "B2", correctionMode: "gentle",   tone: "casual" },
+  { id: "luca",   name: "Luca Bianchi",    role: "Повар, Болонья",        lang: "Italiano", avatar: avLuca,                        lastText: "Domani ti mando la ricetta, promesso.",               lastTime: "вчера", level: "A2", correctionMode: "balanced", tone: "neutral" },
+  { id: "mia",    name: "Mia Andersen",    role: "Дизайнер, Копенгаген",  lang: "English",  avatar: avMia,                         lastText: "Have a look when you get a sec — no rush.",           lastTime: "пн",    level: "C1", correctionMode: "gentle",   tone: "neutral" },
+  { id: "klaus",  name: "Klaus Bergmann",  role: "Профессор, Берлин",     lang: "Deutsch",  avatar: avKlaus, muted: true,           lastText: "Ich habe Ihnen die Notizen geschickt.",               lastTime: "пн",    level: "B1", correctionMode: "strict",   tone: "formal" },
+  { id: "mei",    name: "Mei Chen",        role: "Студентка, Тайбэй",     lang: "中文",      avatar: avMei,   unread: 1,             lastText: "你今天学了什么新词？",                                   lastTime: "вс",    level: "A1", correctionMode: "balanced", tone: "casual" },
+];
+
+const initialMessages: Msg[] = [
+  { id: "m1", from: "persona", text: "¡Hola! ¿Cómo va tu día? Yo acabo de cerrar la cafetería y estoy agotada.", time: "14:02" },
+  { id: "m2", from: "user",    text: "Hola Sofía! Mi día ir bien. Yo estudio español dos hora hoy.", time: "14:05", hasError: true },
+  { id: "m3", from: "persona", text: "¡Qué bien! Se nota que estás practicando. ¿Y qué has aprendido hoy?", time: "14:06" },
+  { id: "m4", from: "user",    text: "Aprendo palabras nuevas sobre comida. Quiero pedir café en tu cafetería un día.", time: "14:18", hasError: true },
+  { id: "m5", from: "persona", text: "¡Vale! Entonces mañana a las nueve, ¿te parece? Te preparo un cortado que no olvidarás.", time: "14:22" },
+];
+
+const correctorCards: CorrectorCard[] = [
+  {
+    id: "c1", msgId: "m2", status: "errors",
+    original: "Mi día ir bien. Yo estudio español dos hora hoy.",
+    corrected: {
+      parts: [
+        { t: "Mi día ", kind: "same" },
+        { t: "ir", kind: "del" }, { t: " ", kind: "same" }, { t: "va", kind: "add" },
+        { t: " bien. ", kind: "same" },
+        { t: "Yo ", kind: "del" },
+        { t: "Estudi", kind: "same" }, { t: "o", kind: "del" }, { t: "é", kind: "add" },
+        { t: " español ", kind: "same" },
+        { t: "dos hora", kind: "del" }, { t: " ", kind: "same" }, { t: "dos horas", kind: "add" },
+        { t: " hoy.", kind: "same" },
+      ],
+    },
+    notes: [
+      { n: 1, title: "Спряжение: ir → va",                       body: "После «mi día» нужно 3-е лицо ед. числа настоящего времени, а не инфинитив.", example: "Mi día va bien." },
+      { n: 2, title: "Опустите «yo», используйте pretérito",     body: "В испанском местоимение обычно опускается; действие завершено — pretérito.",     example: "Estudié español dos horas hoy." },
+      { n: 3, title: "Число: hora → horas",                      body: "После «dos» существительное во множественном числе.",                              example: "dos horas, tres cafés" },
+    ],
+  },
+  { id: "c2", msgId: "m4", status: "clean",
+    original: "Aprendo palabras nuevas sobre comida. Quiero pedir café en tu cafetería un día." },
+];
+
+// ---------- Primitives ----------
+function Avatar({ src, alt, size = 40, online }: { src: string; alt: string; size?: number; online?: boolean }) {
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <img
+        src={src} alt={alt} width={size} height={size} loading="lazy"
+        className="h-full w-full rounded-full object-cover"
+      />
+      {online && (
+        <span
+          className="absolute right-0 bottom-0 block rounded-full bg-ok ring-2 ring-surface"
+          style={{ width: Math.max(8, size * 0.22), height: Math.max(8, size * 0.22) }}
+          aria-hidden
+        />
+      )}
+    </div>
+  );
+}
+
+function IconBtn({ children, onClick, title, className = "" }: { children: ReactNode; onClick?: () => void; title?: string; className?: string }) {
+  return (
+    <button
+      onClick={onClick} title={title} type="button"
+      className={`grid h-8 w-8 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-subtle hover:text-ink ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+const LIST_PANEL = { min: 260, default: 316, max: 460 };
+const CORRECTOR_PANEL = { min: 280, default: 360, max: 540 };
+const CENTER_PANEL_MIN = 430;
+const RESIZE_RAIL_TOTAL = 20;
+
+function clamp(n: number, min: number, max: number) {
+  return Math.min(Math.max(n, min), Math.max(min, max));
+}
+
+function ResizeRail({ label, onPointerDown }: { label: string; onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => void }) {
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={label}
+      onPointerDown={onPointerDown}
+      className="group relative z-10 h-full cursor-col-resize touch-none bg-transparent"
+    >
+      <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-ink/10" />
+    </div>
+  );
+}
+
+// ---------- Modal ----------
+function Modal({ open, onClose, title, subtitle, children, footer, size = "md" }: {
+  open: boolean; onClose: () => void; title: string; subtitle?: string;
+  children: ReactNode; footer?: ReactNode; size?: "sm" | "md" | "lg";
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = ""; };
+  }, [open, onClose]);
+  if (!open) return null;
+  const w = size === "sm" ? "max-w-sm" : size === "lg" ? "max-w-2xl" : "max-w-md";
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
+      <div className="absolute inset-0 bg-ink/40 backdrop-blur-[2px]" onClick={onClose} />
+      <div className={`relative z-10 flex w-full ${w} max-h-[100dvh] flex-col overflow-hidden rounded-t-xl bg-card shadow-2xl sm:max-h-[90vh] sm:rounded-xl`}>
+        <div className="flex shrink-0 items-start justify-between gap-4 px-5 pt-4 pb-3 sm:px-6 sm:pt-5 sm:pb-4">
+          <div className="min-w-0">
+            <h2 className="font-serif-display text-xl text-ink">{title}</h2>
+            {subtitle && <p className="mt-0.5 truncate text-[13px] text-muted-foreground">{subtitle}</p>}
+          </div>
+          <IconBtn onClick={onClose} title="Закрыть"><X className="h-4 w-4" /></IconBtn>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 pb-5 sm:px-6 no-scrollbar">{children}</div>
+        {footer && <div className="flex shrink-0 items-center justify-end gap-2 bg-surface px-5 py-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:px-6">{footer}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Form fields ----------
+function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  return (
+    <label className="mb-4 block">
+      <div className="mb-1.5 text-[12px] font-medium text-ink">{label}</div>
+      {children}
+      {hint && <div className="mt-1 text-[11px] text-muted-foreground">{hint}</div>}
+    </label>
+  );
+}
+function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      {...props}
+      className={`w-full rounded-lg bg-subtle px-3 py-2 text-[14px] text-ink outline-none placeholder:text-muted-foreground focus:bg-white focus:ring-1 focus:ring-ink/20 ${props.className ?? ""}`}
+    />
+  );
+}
+function Select({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: Array<{ value: string; label: string }> }) {
+  return (
+    <select
+      value={value} onChange={(e) => onChange(e.target.value)}
+      className="w-full appearance-none rounded-lg bg-subtle px-3 py-2 text-[14px] text-ink outline-none focus:bg-white focus:ring-1 focus:ring-ink/20"
+    >
+      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  );
+}
+function Segment<T extends string>({ value, onChange, options }: { value: T; onChange: (v: T) => void; options: Array<{ value: T; label: string }> }) {
+  return (
+    <div className="flex rounded-lg bg-subtle p-0.5">
+      {options.map((o) => (
+        <button key={o.value} type="button" onClick={() => onChange(o.value)}
+          className={`flex-1 rounded-md px-2 py-1.5 text-[13px] transition-colors ${
+            value === o.value ? "bg-white text-ink shadow-sm" : "text-muted-foreground hover:text-ink"
+          }`}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <button type="button" onClick={() => onChange(!checked)}
+      className="flex w-full items-center justify-between rounded-lg bg-subtle px-3 py-2.5 text-left hover:bg-muted">
+      <span className="text-[14px] text-ink">{label}</span>
+      <span className={`relative h-5 w-9 rounded-full transition-colors ${checked ? "bg-ink" : "bg-muted-foreground/30"}`}>
+        <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${checked ? "left-4" : "left-0.5"}`} />
+      </span>
+    </button>
+  );
+}
+function BtnPrimary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      {...props}
+      className={`inline-flex items-center gap-1.5 rounded-lg bg-ink px-3.5 py-1.5 text-[13px] font-medium text-background hover:bg-ink/90 disabled:opacity-40 ${props.className ?? ""}`}
+    />
+  );
+}
+function BtnGhost(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      {...props}
+      className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[13px] font-medium text-muted-foreground hover:bg-subtle hover:text-ink ${props.className ?? ""}`}
+    />
+  );
+}
+
+// ---------- Sidebar ----------
+function Sidebar({
+  personas, activeId, onSelect, onNewChat, onOpenProfile, onOpenProvider, onCollapse,
+}: {
+  personas: Persona[]; activeId: string; onSelect: (id: string) => void;
+  onNewChat: () => void; onOpenProfile: () => void; onOpenProvider: () => void;
+  onCollapse?: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return personas;
+    return personas.filter((p) => p.name.toLowerCase().includes(s) || p.lastText.toLowerCase().includes(s));
+  }, [q, personas]);
+
+  return (
+    <aside className="flex h-full w-full min-w-0 shrink-0 flex-col overflow-hidden bg-surface shadow-[1px_0_2px_rgba(20,20,30,0.03)]">
+      <div className="flex items-center justify-between gap-2 px-5 pt-5 pb-3">
+        <div className="min-w-0">
+          <div className="font-serif-display text-2xl leading-none text-ink">Lingua</div>
+          <div className="mt-1 truncate text-[11px] text-muted-foreground">AI-репетитор в чате</div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <IconBtn onClick={onOpenProvider} title="AI-провайдер"><Sliders className="h-4 w-4" /></IconBtn>
+          <IconBtn onClick={onNewChat} title="Новый чат" className="bg-ink text-background hover:bg-ink/90 hover:text-background">
+            <Plus className="h-4 w-4" />
+          </IconBtn>
+          {onCollapse && (
+            <IconBtn onClick={onCollapse} title="Свернуть панель" className="hidden md:grid">
+              <PanelLeftClose className="h-4 w-4" />
+            </IconBtn>
+          )}
+        </div>
+      </div>
+
+      <div className="px-4 pb-3">
+        <label className="flex items-center gap-2 rounded-lg bg-subtle px-3 py-1.5">
+          <Search className="h-3.5 w-3.5 text-muted-foreground" />
+          <input
+            value={q} onChange={(e) => setQ(e.target.value)}
+            placeholder="Поиск"
+            className="w-full bg-transparent text-[13.5px] outline-none placeholder:text-muted-foreground"
+          />
+        </label>
+      </div>
+
+      <nav className="flex-1 overflow-y-auto no-scrollbar">
+        <ul className="px-2 pb-4">
+          {filtered.map((p) => (
+            <li key={p.id}>
+              <ChatRow p={p} active={p.id === activeId} onClick={() => onSelect(p.id)} />
+            </li>
+          ))}
+          {filtered.length === 0 && (
+            <li className="px-3 py-10 text-center text-sm text-muted-foreground">Ничего не найдено</li>
+          )}
+        </ul>
+      </nav>
+
+      <button
+        onClick={onOpenProfile}
+        className="flex items-center gap-3 bg-surface px-4 py-3 text-left hover:bg-subtle"
+      >
+        <Avatar src={avMe} alt="Вы" size={36} online />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[13.5px] text-ink">Alex Petrov</div>
+          <div className="truncate text-[11.5px] text-muted-foreground">учит 3 языка · B1</div>
+        </div>
+        <Settings className="h-4 w-4 text-muted-foreground" />
+      </button>
+    </aside>
+  );
+}
+
+function ChatRow({ p, active, onClick }: { p: Persona; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex w-full items-start gap-3 rounded-xl px-2.5 py-2 text-left transition-all ${
+        active ? "bg-white shadow-[0_1px_2px_rgba(20,20,30,0.05),0_2px_8px_-4px_rgba(20,20,30,0.06)]" : "hover:bg-white/60"
+      }`}
+    >
+      <Avatar src={p.avatar} alt={p.name} size={44} online={p.online} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="truncate text-[14px] font-medium text-ink">{p.name}</span>
+          <span className="shrink-0 text-[11px] text-muted-foreground">{p.lastTime}</span>
+        </div>
+        <div className="mt-0.5 flex items-center justify-between gap-2">
+          <p className="truncate text-[12.5px] text-muted-foreground">{p.lastText}</p>
+          <span className="flex shrink-0 items-center gap-1">
+            {p.muted && <BellOff className="h-3 w-3 text-muted-foreground" />}
+            {p.unread ? (
+              <span className="rounded-full bg-ink px-1.5 py-0.5 text-[10px] font-medium text-background">{p.unread}</span>
+            ) : null}
+          </span>
+        </div>
+        <div className="mt-0.5 text-[10.5px] uppercase tracking-wider text-muted-foreground">{p.lang} · {p.level}</div>
+      </div>
+    </button>
+  );
+}
+
+// ---------- Center ----------
+function ConversationHeader({
+  p, onToggleCorrector, correctorOpen, onOpenChatSettings, onBack, notesCount, onExpandList,
+}: {
+  p: Persona; onToggleCorrector: () => void; correctorOpen: boolean;
+  onOpenChatSettings: () => void; onBack?: () => void; notesCount?: number;
+  onExpandList?: () => void;
+}) {
+  return (
+    <header className="flex items-center justify-between gap-2 bg-background px-3 py-2.5 shadow-[0_1px_2px_rgba(20,20,30,0.03)] sm:px-6 sm:py-3">
+      <div className="flex min-w-0 flex-1 items-center gap-1">
+        {onBack && (
+          <IconBtn onClick={onBack} title="Назад" className="md:hidden"><ArrowLeft className="h-4 w-4" /></IconBtn>
+        )}
+        {onExpandList && (
+          <IconBtn onClick={onExpandList} title="Показать список" className="hidden md:grid">
+            <PanelLeftOpen className="h-4 w-4" />
+          </IconBtn>
+        )}
+        <button onClick={onOpenChatSettings} className="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-1 py-1 text-left hover:bg-subtle">
+          <Avatar src={p.avatar} alt={p.name} size={38} online={p.online} />
+          <div className="min-w-0">
+            <div className="truncate text-[14px] font-medium text-ink">{p.name}</div>
+            <div className="truncate text-[11.5px] text-muted-foreground">
+              {p.online ? "в сети" : "был(а) недавно"} · {p.role}
+            </div>
+          </div>
+        </button>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        <IconBtn onClick={onOpenChatSettings} title="Настройки чата" className="hidden md:grid"><MoreHorizontal className="h-4 w-4" /></IconBtn>
+        <button
+          onClick={onToggleCorrector}
+          title={correctorOpen ? "Скрыть разбор" : "Показать разбор"}
+          className="relative grid h-9 w-9 place-items-center rounded-full text-muted-foreground hover:bg-subtle hover:text-ink"
+        >
+          <BookOpen className="h-4 w-4" />
+          {notesCount ? (
+            <span className="absolute -top-0.5 -right-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-accent-ink px-1 text-[10px] font-medium text-background">
+              {notesCount}
+            </span>
+          ) : null}
+        </button>
+      </div>
+    </header>
+  );
+}
+
+function DayDivider({ label }: { label: string }) {
+  return (
+    <div className="my-4 flex justify-center">
+      <span className="rounded-full bg-card/70 px-2.5 py-0.5 text-[10.5px] uppercase tracking-wider text-muted-foreground backdrop-blur-sm">{label}</span>
+    </div>
+  );
+}
+
+
+function Bubble({ m, onClick, active }: { m: Msg; onClick?: () => void; active?: boolean }) {
+  const isUser = m.from === "user";
+  return (
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+      <button
+        onClick={onClick}
+        className={`group relative max-w-[72%] min-w-[80px] rounded-xl px-3.5 py-2 text-[14.5px] leading-relaxed shadow-[0_1px_1px_rgba(20,20,30,0.04),0_2px_6px_-2px_rgba(20,20,30,0.08)] transition-all ${
+          isUser
+            ? "rounded-br-md bg-ink text-background"
+            : "rounded-bl-md bg-card/90 text-ink backdrop-blur-sm"
+        } ${active ? (isUser ? "bg-accent-ink" : "bg-card") : ""}`}
+      >
+        <p className="whitespace-pre-wrap text-left">
+          {m.text}
+          <span
+            aria-hidden
+            className={`float-right ml-3 translate-y-[6px] text-[10.5px] leading-none tabular-nums ${
+              isUser ? "text-background/60" : "text-muted-foreground"
+            }`}
+          >
+            {m.time}
+          </span>
+        </p>
+      </button>
+    </div>
+  );
+}
+
+
+
+function Composer({ onSend, placeholder }: { onSend: (t: string) => void; placeholder: string }) {
+  const [v, setV] = useState("");
+  const hasText = v.trim().length > 0;
+  return (
+    <div className="bg-background px-3 pt-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:px-6 sm:pt-4 sm:pb-4">
+      <form
+        onSubmit={(e) => { e.preventDefault(); if (!v.trim()) return; onSend(v.trim()); setV(""); }}
+        className="mx-auto flex max-w-3xl items-center gap-2 rounded-xl bg-subtle px-3 py-1.5 shadow-[0_1px_2px_rgba(20,20,30,0.04),0_4px_16px_-8px_rgba(20,20,30,0.08)] focus-within:bg-muted"
+      >
+        <textarea
+          value={v} onChange={(e) => setV(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (v.trim()) { onSend(v.trim()); setV(""); } } }}
+          rows={1} placeholder={placeholder}
+          className="block max-h-40 min-h-[36px] flex-1 resize-none self-center bg-transparent px-1 py-2 text-[16px] leading-5 outline-none placeholder:text-muted-foreground sm:text-[14.5px]"
+        />
+        {hasText ? (
+          <button
+            type="submit"
+            className="grid h-9 w-9 place-items-center rounded-full bg-ink text-background transition-opacity"
+            aria-label="Отправить"
+          >
+            <Send className="h-3.5 w-3.5" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => { /* voice recording placeholder */ }}
+            className="grid h-9 w-9 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-ink"
+            aria-label="Голосовое сообщение"
+          >
+            <Mic className="h-4 w-4" />
+          </button>
+        )}
+      </form>
+      <div className="mx-auto mt-2 hidden max-w-3xl px-2 text-[10.5px] text-muted-foreground sm:block">
+        Enter — отправить · Shift+Enter — новая строка
+      </div>
+    </div>
+  );
+}
+
+function Center({
+  p, messages, activeMsgId, onSelectMsg, onSend, onToggleCorrector, correctorOpen, onOpenChatSettings, onBack, notesCount, onExpandList,
+}: {
+  p: Persona; messages: Msg[]; activeMsgId: string | null;
+  onSelectMsg: (id: string) => void; onSend: (t: string) => void;
+  onToggleCorrector: () => void; correctorOpen: boolean; onOpenChatSettings: () => void;
+  onBack?: () => void; notesCount?: number; onExpandList?: () => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [showJump, setShowJump] = useState(false);
+
+  useEffect(() => {
+    const el = scrollRef.current; if (!el) return;
+    const onScroll = () => setShowJump(el.scrollHeight - el.clientHeight - el.scrollTop > 200);
+    el.addEventListener("scroll", onScroll);
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current; if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [messages.length, p.id]);
+
+  const jump = () => { const el = scrollRef.current; if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" }); };
+
+  return (
+    <section className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-background">
+      <ConversationHeader
+        p={p} onToggleCorrector={onToggleCorrector} correctorOpen={correctorOpen}
+        onOpenChatSettings={onOpenChatSettings} onBack={onBack} notesCount={notesCount}
+        onExpandList={onExpandList}
+      />
+
+      <div ref={scrollRef} className="chat-canvas flex-1 overflow-y-auto no-scrollbar px-4 py-2 sm:px-6">
+        <div className="mx-auto flex max-w-3xl flex-col gap-2">
+          <DayDivider label="Сегодня" />
+          {messages.map((m) => (
+            <div key={m.id} id={`msg-${m.id}`}>
+              <Bubble m={m} active={activeMsgId === m.id} onClick={() => onSelectMsg(m.id)} />
+            </div>
+          ))}
+          <div className="flex items-center gap-2 pl-1 pt-3 text-[11.5px] text-muted-foreground">
+            <span>{p.name.split(" ")[0]} печатает</span>
+            <span className="inline-flex gap-0.5">
+              <span className="h-1 w-1 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.2s]" />
+              <span className="h-1 w-1 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.1s]" />
+              <span className="h-1 w-1 animate-bounce rounded-full bg-muted-foreground" />
+            </span>
+          </div>
+        </div>
+      </div>
+
+
+      {showJump && (
+        <button onClick={jump}
+          className="absolute bottom-24 right-4 grid h-9 w-9 place-items-center rounded-full bg-surface text-muted-foreground shadow-sm hover:text-ink sm:right-8">
+          <ArrowDown className="h-4 w-4" />
+        </button>
+      )}
+
+      <Composer onSend={onSend} placeholder={`Напишите на ${p.lang}…`} />
+    </section>
+  );
+}
+
+// ---------- Corrector ----------
+function Corrector({
+  cards, activeMsgId, onJump, onClose, onBack,
+}: {
+  cards: CorrectorCard[]; activeMsgId: string | null;
+  onJump: (id: string) => void; onClose: () => void; onBack?: () => void;
+}) {
+  return (
+    <aside className="flex h-full w-full min-w-0 shrink-0 flex-col overflow-hidden bg-surface shadow-[-1px_0_2px_rgba(20,20,30,0.03)]">
+      <div className="flex items-center gap-2 px-3 py-3 sm:px-5">
+        {onBack && (
+          <IconBtn onClick={onBack} title="Назад" className="md:hidden"><ArrowLeft className="h-4 w-4" /></IconBtn>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="font-serif-display text-lg leading-none text-ink">Разбор</div>
+          <div className="mt-1 text-[11px] text-muted-foreground">Заметки на полях к вашим сообщениям</div>
+        </div>
+        <IconBtn onClick={onClose} title="Скрыть панель" className="hidden md:grid"><X className="h-4 w-4" /></IconBtn>
+      </div>
+
+      <div className="flex-1 overflow-y-auto no-scrollbar px-5 py-4 sm:px-6">
+        <div className="flex flex-col gap-10">
+          {cards.map((c) => (
+            <CorrectorCardView key={c.id} c={c} active={activeMsgId === c.msgId} onJump={() => onJump(c.msgId)} />
+          ))}
+        </div>
+      </div>
+
+      <div className="px-5 py-4 sm:px-6">
+        <div className="font-serif italic text-[12px] text-muted-foreground">сегодня</div>
+        <dl className="mt-1 flex items-baseline gap-5 text-[13px] text-ink">
+          <div><span className="font-serif-display text-2xl leading-none">7</span> <span className="text-muted-foreground">разобрано</span></div>
+          <div><span className="font-serif-display text-2xl leading-none">3</span> <span className="text-muted-foreground">с правками</span></div>
+          <div><span className="font-serif-display text-2xl leading-none">4</span> <span className="text-muted-foreground">чистых</span></div>
+        </dl>
+      </div>
+    </aside>
+  );
+}
+
+function CorrectorCardView({ c, active, onJump }: { c: CorrectorCard; active: boolean; onJump: () => void }) {
+  if (c.status === "clean") {
+    return (
+      <button onClick={onJump} className={`block w-full text-left ${active ? "opacity-100" : "opacity-90"}`}>
+        <div className="font-serif italic text-[12.5px] text-muted-foreground">— без замечаний</div>
+        <p className="mt-1 line-clamp-2 font-serif italic text-[14px] text-muted-foreground">{c.original}</p>
+      </button>
+    );
+  }
+
+  return (
+    <article className={`block ${active ? "" : ""}`}>
+      <button onClick={onJump} className="mb-2 block text-left">
+        <div className="font-serif italic text-[12.5px] text-muted-foreground">
+          заметки к сообщению <span className="text-ink">·</span> {c.notes?.length}
+        </div>
+      </button>
+
+      <p className="font-serif italic text-[13.5px] leading-relaxed text-muted-foreground">
+        {c.original}
+      </p>
+
+      <p className="mt-3 text-[15px] leading-relaxed text-ink">
+        {c.corrected?.parts.map((p, i) => {
+          if (p.kind === "del") return <span key={i} className="text-muted-foreground line-through decoration-muted-foreground/50">{p.t}</span>;
+          if (p.kind === "add") return <span key={i} className="text-ink" style={{ boxShadow: "inset 0 -1px 0 var(--color-accent-ink)" }}>{p.t}</span>;
+          return <span key={i}>{p.t}</span>;
+        })}
+      </p>
+
+      <ol className="mt-5 space-y-4">
+        {c.notes?.map((n) => (
+          <li key={n.n} className="grid grid-cols-[24px_minmax(0,1fr)] gap-x-2">
+            <span className="pt-0.5 text-right font-serif italic text-[13px] text-muted-foreground">{n.n}.</span>
+            <div className="min-w-0">
+              <div className="text-[13.5px] text-ink">{n.title}</div>
+              <p className="mt-0.5 text-[12.5px] leading-relaxed text-muted-foreground">{n.body}</p>
+              <p className="mt-1 font-serif italic text-[13px] text-ink">{n.example}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </article>
+  );
+}
+
+// ---------- Settings modals ----------
+type ProfileState = {
+  name: string; email: string; native: string; goal: string; dailyMinutes: number;
+  notifications: boolean; sound: boolean; theme: "light" | "dark";
+};
+type ProviderState = {
+  provider: string; model: string; apiKey: string;
+  temperature: number; verbosity: "brief" | "normal" | "detailed";
+  autoCorrect: boolean;
+};
+
+function ProfileSettings({ open, onClose, state, onSave }: {
+  open: boolean; onClose: () => void; state: ProfileState; onSave: (s: ProfileState) => void;
+}) {
+  const [s, setS] = useState(state);
+  useEffect(() => setS(state), [state, open]);
+  return (
+    <Modal open={open} onClose={onClose} title="Профиль" subtitle="Ваши данные и предпочтения обучения"
+      footer={<><BtnGhost onClick={onClose}>Отмена</BtnGhost><BtnPrimary onClick={() => { onSave(s); onClose(); }}>Сохранить</BtnPrimary></>}>
+      <div className="mb-4 flex items-center gap-3">
+        <Avatar src={avMe} alt="Вы" size={56} />
+        <div>
+          <div className="text-[14px] font-medium text-ink">{s.name || "Без имени"}</div>
+          <button className="text-[12px] text-muted-foreground hover:text-ink">Изменить фото</button>
+        </div>
+      </div>
+      <Field label="Имя"><TextInput value={s.name} onChange={(e) => setS({ ...s, name: e.target.value })} /></Field>
+      <Field label="E-mail"><TextInput type="email" value={s.email} onChange={(e) => setS({ ...s, email: e.target.value })} /></Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Родной язык">
+          <Select value={s.native} onChange={(v) => setS({ ...s, native: v })}
+            options={[{value:"ru",label:"Русский"},{value:"en",label:"English"},{value:"es",label:"Español"},{value:"de",label:"Deutsch"}]} />
+        </Field>
+        <Field label="Цель практики">
+          <Select value={s.goal} onChange={(v) => setS({ ...s, goal: v })}
+            options={[{value:"travel",label:"Путешествия"},{value:"work",label:"Работа"},{value:"exam",label:"Экзамен"},{value:"hobby",label:"Для себя"}]} />
+        </Field>
+      </div>
+      <Field label={`Ежедневная цель — ${s.dailyMinutes} мин`}>
+        <input type="range" min={5} max={90} step={5} value={s.dailyMinutes}
+          onChange={(e) => setS({ ...s, dailyMinutes: Number(e.target.value) })}
+          className="w-full accent-ink" />
+      </Field>
+      <div className="space-y-2">
+        <Toggle label="Уведомления о новых сообщениях" checked={s.notifications} onChange={(v) => setS({ ...s, notifications: v })} />
+        <Toggle label="Звук при получении" checked={s.sound} onChange={(v) => setS({ ...s, sound: v })} />
+      </div>
+      <div className="mt-4">
+        <div className="mb-1.5 text-[12px] font-medium text-ink">Тема</div>
+        <Segment value={s.theme} onChange={(v) => setS({ ...s, theme: v })}
+          options={[{value:"light",label:"Светлая"},{value:"dark",label:"Тёмная"}]} />
+      </div>
+      <button className="mt-5 inline-flex items-center gap-2 text-[13px] text-accent-ink hover:opacity-80">
+        <LogOut className="h-3.5 w-3.5" /> Выйти из аккаунта
+      </button>
+    </Modal>
+  );
+}
+
+function ProviderSettings({ open, onClose, state, onSave }: {
+  open: boolean; onClose: () => void; state: ProviderState; onSave: (s: ProviderState) => void;
+}) {
+  const [s, setS] = useState(state);
+  useEffect(() => setS(state), [state, open]);
+  return (
+    <Modal open={open} onClose={onClose} title="AI-провайдер" subtitle="Модель, которая ведёт диалоги и разбирает ошибки"
+      footer={<><BtnGhost onClick={onClose}>Отмена</BtnGhost><BtnPrimary onClick={() => { onSave(s); onClose(); }}>Применить</BtnPrimary></>}>
+      <Field label="Провайдер">
+        <Segment value={s.provider} onChange={(v) => setS({ ...s, provider: v })}
+          options={[{value:"lovable",label:"Lovable AI"},{value:"openai",label:"OpenAI"},{value:"anthropic",label:"Anthropic"}]} />
+      </Field>
+      <Field label="Модель">
+        <Select value={s.model} onChange={(v) => setS({ ...s, model: v })}
+          options={[
+            {value:"gemini-3-flash",label:"Gemini 3 Flash — быстрая"},
+            {value:"gemini-3-pro",label:"Gemini 3 Pro — точная"},
+            {value:"gpt-5",label:"GPT-5"},
+            {value:"claude-sonnet",label:"Claude Sonnet 4"},
+          ]} />
+      </Field>
+      <Field label="API-ключ" hint="Хранится локально, используется только для запросов к провайдеру.">
+        <TextInput type="password" placeholder="sk-…" value={s.apiKey} onChange={(e) => setS({ ...s, apiKey: e.target.value })} />
+      </Field>
+      <Field label={`Температура — ${s.temperature.toFixed(1)}`} hint="Ниже — точнее, выше — креативнее.">
+        <input type="range" min={0} max={1} step={0.1} value={s.temperature}
+          onChange={(e) => setS({ ...s, temperature: Number(e.target.value) })}
+          className="w-full accent-ink" />
+      </Field>
+      <Field label="Детализация разборов">
+        <Segment value={s.verbosity} onChange={(v) => setS({ ...s, verbosity: v })}
+          options={[{value:"brief",label:"Кратко"},{value:"normal",label:"Средне"},{value:"detailed",label:"Подробно"}]} />
+      </Field>
+      <Toggle label="Автоматически показывать разбор после отправки" checked={s.autoCorrect} onChange={(v) => setS({ ...s, autoCorrect: v })} />
+    </Modal>
+  );
+}
+
+function ChatSettings({ open, onClose, persona, onSave, onDelete }: {
+  open: boolean; onClose: () => void; persona: Persona | null;
+  onSave: (p: Persona) => void; onDelete: (id: string) => void;
+}) {
+  const [p, setP] = useState<Persona | null>(persona);
+  useEffect(() => setP(persona), [persona, open]);
+  if (!p) return null;
+  return (
+    <Modal open={open} onClose={onClose} title="Настройки чата" subtitle={p.name}
+      footer={
+        <>
+          <BtnGhost onClick={() => { onDelete(p.id); onClose(); }} className="mr-auto text-accent-ink hover:text-accent-ink">Удалить чат</BtnGhost>
+          <BtnGhost onClick={onClose}>Отмена</BtnGhost>
+          <BtnPrimary onClick={() => { onSave(p); onClose(); }}>Сохранить</BtnPrimary>
+        </>
+      }>
+      <div className="mb-4 flex items-center gap-3">
+        <Avatar src={p.avatar} alt={p.name} size={56} online={p.online} />
+        <div>
+          <div className="text-[14px] font-medium text-ink">{p.name}</div>
+          <div className="text-[12px] text-muted-foreground">{p.role}</div>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Язык">
+          <TextInput value={p.lang} onChange={(e) => setP({ ...p, lang: e.target.value })} />
+        </Field>
+        <Field label="Ваш уровень">
+          <Select value={p.level} onChange={(v) => setP({ ...p, level: v as Persona["level"] })}
+            options={["A1","A2","B1","B2","C1"].map((x) => ({ value: x, label: x }))} />
+        </Field>
+      </div>
+      <Field label="Режим коррекции" hint="Насколько строго собеседник исправляет ваши ошибки.">
+        <Segment value={p.correctionMode} onChange={(v) => setP({ ...p, correctionMode: v })}
+          options={[{value:"gentle",label:"Мягко"},{value:"balanced",label:"Сбалансированно"},{value:"strict",label:"Строго"}]} />
+      </Field>
+      <Field label="Стиль общения">
+        <Segment value={p.tone} onChange={(v) => setP({ ...p, tone: v })}
+          options={[{value:"formal",label:"Формально"},{value:"neutral",label:"Нейтрально"},{value:"casual",label:"Дружески"}]} />
+      </Field>
+      <Toggle label={p.muted ? "Уведомления выключены" : "Уведомления включены"}
+        checked={!p.muted} onChange={(v) => setP({ ...p, muted: !v })} />
+    </Modal>
+  );
+}
+
+function NewChatModal({ open, onClose, onCreate }: {
+  open: boolean; onClose: () => void; onCreate: (p: Persona) => void;
+}) {
+  const templates = [
+    { name: "Испанский бариста", lang: "Español", role: "Барista, кофейня в Мадриде",  avatar: avSofia,  level: "B1" as const },
+    { name: "Японский инженер",  lang: "日本語",    role: "Инженер, Осака",              avatar: avHiro,   level: "A2" as const },
+    { name: "Французский арт-критик", lang: "Français", role: "Художница из Лиона",     avatar: avAmelie, level: "B2" as const },
+    { name: "Итальянский повар", lang: "Italiano", role: "Повар из Болоньи",            avatar: avLuca,   level: "A2" as const },
+  ];
+  const [choice, setChoice] = useState<number | null>(null);
+  useEffect(() => { if (open) setChoice(0); }, [open]);
+  return (
+    <Modal open={open} onClose={onClose} title="Новый собеседник" subtitle="Выберите шаблон или создайте своего" size="lg"
+      footer={
+        <>
+          <BtnGhost onClick={onClose}>Отмена</BtnGhost>
+          <BtnPrimary
+            disabled={choice === null}
+            onClick={() => {
+              if (choice === null) return;
+              const t = templates[choice];
+              onCreate({
+                id: `p-${Date.now()}`, name: t.name, role: t.role, lang: t.lang, avatar: t.avatar,
+                lastText: "Начните диалог — я отвечу на " + t.lang, lastTime: "сейчас",
+                online: true, level: t.level, correctionMode: "balanced", tone: "casual",
+              });
+              onClose();
+            }}>
+            Создать чат
+          </BtnPrimary>
+        </>
+      }>
+      <div className="grid grid-cols-2 gap-2">
+        {templates.map((t, i) => (
+          <button key={t.name} onClick={() => setChoice(i)}
+            className={`flex items-center gap-3 rounded-xl p-3 text-left transition-colors ${
+              choice === i ? "bg-ink text-background" : "bg-subtle hover:bg-muted"
+            }`}>
+            <Avatar src={t.avatar} alt={t.name} size={44} />
+            <div className="min-w-0">
+              <div className={`truncate text-[13.5px] font-medium ${choice === i ? "text-background" : "text-ink"}`}>{t.name}</div>
+              <div className={`truncate text-[11.5px] ${choice === i ? "text-background/70" : "text-muted-foreground"}`}>{t.lang} · {t.level}</div>
+              <div className={`truncate text-[11px] ${choice === i ? "text-background/60" : "text-muted-foreground"}`}>{t.role}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+      <div className="mt-4 rounded-xl bg-subtle p-3 text-[12px] text-muted-foreground">
+        <span className="text-ink">Совет.</span> После создания вы сможете точнее настроить уровень, тон и режим коррекции в настройках чата.
+      </div>
+    </Modal>
+  );
+}
+
+// ---------- Root ----------
+function Index() {
+  const isMobile = useIsMobile();
+  const shellRef = useRef<HTMLElement>(null);
+  const [personas, setPersonas] = useState<Persona[]>(initialPersonas);
+  const [activeId, setActiveId] = useState("sofia");
+  const [messages, setMessages] = useState<Msg[]>(initialMessages);
+  const [activeMsgId, setActiveMsgId] = useState<string | null>("m2");
+  const [mobileView, setMobileView] = useState<"list" | "chat" | "corrector">("list");
+
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [providerOpen, setProviderOpen] = useState(false);
+  const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
+  const [newChatOpen, setNewChatOpen] = useState(false);
+
+  const [profile, setProfile] = useState<ProfileState>({
+    name: "Alex Petrov", email: "alex@lingua.app", native: "ru", goal: "travel",
+    dailyMinutes: 20, notifications: true, sound: false, theme: "light",
+  });
+  const [provider, setProvider] = useState<ProviderState>({
+    provider: "lovable", model: "gemini-3-flash", apiKey: "",
+    temperature: 0.7, verbosity: "normal", autoCorrect: true,
+  });
+
+  const persona = personas.find((p) => p.id === activeId) ?? personas[0];
+  const notesCount = useMemo(
+    () => correctorCards.reduce((n, c) => n + (c.notes?.length ?? 0), 0),
+    [],
+  );
+
+  const handleSend = (text: string) => {
+    const id = `u-${Date.now()}`;
+    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    setMessages((m) => [...m, { id, from: "user", text, time }]);
+    setActiveMsgId(id);
+  };
+  const handleJump = (msgId: string) => {
+    setActiveMsgId(msgId);
+    if (isMobile) setMobileView("chat");
+    setTimeout(() => {
+      const el = document.getElementById(`msg-${msgId}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 50);
+  };
+  const savePersona = (updated: Persona) =>
+    setPersonas((list) => list.map((p) => (p.id === updated.id ? updated : p)));
+  const deletePersona = (id: string) => {
+    setPersonas((list) => {
+      const next = list.filter((p) => p.id !== id);
+      if (id === activeId && next[0]) setActiveId(next[0].id);
+      return next;
+    });
+  };
+  const createPersona = (p: Persona) => {
+    setPersonas((list) => [p, ...list]);
+    setActiveId(p.id);
+    setMessages([{ id: "seed", from: "persona", text: `¡Hola! / Hello! Готов(а) поговорить — пишите первое сообщение.`, time: "сейчас" }]);
+    setActiveMsgId(null);
+    if (isMobile) setMobileView("chat");
+  };
+
+  const handleSelectChat = (id: string) => {
+    setActiveId(id);
+    if (isMobile) setMobileView("chat");
+  };
+  const [listWidth, setListWidth] = useState(LIST_PANEL.default);
+  const [correctorWidth, setCorrectorWidth] = useState(CORRECTOR_PANEL.default);
+  const [listCollapsed, setListCollapsed] = useState(false);
+  const [correctorCollapsed, setCorrectorCollapsed] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
+
+  const getShellWidth = () => shellRef.current?.clientWidth ?? window.innerWidth;
+  const getListMax = (rightWidth = correctorWidth) => {
+    const occupiedByRight = correctorCollapsed ? 0 : rightWidth;
+    return Math.min(LIST_PANEL.max, getShellWidth() - CENTER_PANEL_MIN - occupiedByRight - RESIZE_RAIL_TOTAL);
+  };
+  const getCorrectorMax = (leftWidth = listWidth) => {
+    const occupiedByLeft = listCollapsed ? 0 : leftWidth;
+    return Math.min(CORRECTOR_PANEL.max, getShellWidth() - CENTER_PANEL_MIN - occupiedByLeft - RESIZE_RAIL_TOTAL);
+  };
+
+  useEffect(() => {
+    if (isMobile) return;
+    const keepPanelsInsideViewport = () => {
+      setListWidth((w) => (listCollapsed ? w : clamp(w, LIST_PANEL.min, getListMax())));
+      setCorrectorWidth((w) => (correctorCollapsed ? w : clamp(w, CORRECTOR_PANEL.min, getCorrectorMax())));
+    };
+    keepPanelsInsideViewport();
+    window.addEventListener("resize", keepPanelsInsideViewport);
+    return () => window.removeEventListener("resize", keepPanelsInsideViewport);
+  }, [isMobile, listCollapsed, correctorCollapsed]);
+
+  const startListResize = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = listWidth;
+    setIsResizing(true);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onMove = (event: PointerEvent) => {
+      setListWidth(clamp(startWidth + event.clientX - startX, LIST_PANEL.min, getListMax()));
+    };
+    const onUp = () => {
+      setIsResizing(false);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp, { once: true });
+  };
+
+  const startCorrectorResize = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = correctorWidth;
+    setIsResizing(true);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onMove = (event: PointerEvent) => {
+      setCorrectorWidth(clamp(startWidth - (event.clientX - startX), CORRECTOR_PANEL.min, getCorrectorMax()));
+    };
+    const onUp = () => {
+      setIsResizing(false);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp, { once: true });
+  };
+
+  const handleToggleCorrector = () => {
+    if (isMobile) {
+      setMobileView((v) => (v === "corrector" ? "chat" : "corrector"));
+      return;
+    }
+    if (correctorCollapsed) {
+      setCorrectorWidth((w) => clamp(Math.max(w, CORRECTOR_PANEL.default), CORRECTOR_PANEL.min, getCorrectorMax()));
+      setCorrectorCollapsed(false);
+    } else {
+      setCorrectorCollapsed(true);
+    }
+  };
+  const handleExpandList = () => {
+    setListWidth((w) => clamp(Math.max(w, LIST_PANEL.default), LIST_PANEL.min, getListMax()));
+    setListCollapsed(false);
+  };
+  const handleCollapseList = () => {
+    setListCollapsed(true);
+  };
+
+  const sidebarNode = (
+    <Sidebar
+      personas={personas} activeId={activeId} onSelect={handleSelectChat}
+      onNewChat={() => setNewChatOpen(true)}
+      onOpenProfile={() => setProfileOpen(true)}
+      onOpenProvider={() => setProviderOpen(true)}
+      onCollapse={isMobile ? undefined : handleCollapseList}
+    />
+  );
+  const centerNode = (
+    <Center
+      p={persona} messages={messages} activeMsgId={activeMsgId}
+      onSelectMsg={setActiveMsgId} onSend={handleSend}
+      onToggleCorrector={handleToggleCorrector} correctorOpen={!correctorCollapsed}
+      onOpenChatSettings={() => setChatSettingsOpen(true)}
+      onBack={isMobile ? () => setMobileView("list") : undefined}
+      notesCount={notesCount}
+      onExpandList={!isMobile && listCollapsed ? handleExpandList : undefined}
+    />
+  );
+  const correctorNode = (
+    <Corrector
+      cards={correctorCards} activeMsgId={activeMsgId}
+      onJump={handleJump} onClose={handleToggleCorrector}
+      onBack={isMobile ? () => setMobileView("chat") : undefined}
+    />
+  );
+
+  const panelMotion = isResizing ? "" : "transition-[width] duration-200 ease-out";
+
+  return (
+    <main ref={shellRef} className="flex h-[100dvh] w-full overflow-hidden bg-background text-foreground">
+      {isMobile ? (
+        <>
+          {mobileView === "list" && sidebarNode}
+          {mobileView === "chat" && centerNode}
+          {mobileView === "corrector" && correctorNode}
+        </>
+      ) : (
+        <div className="flex h-full w-full min-w-0 overflow-hidden">
+          {!listCollapsed && (
+            <div
+              className={`h-full shrink-0 overflow-hidden ${panelMotion}`}
+              style={{ width: listWidth, minWidth: LIST_PANEL.min, maxWidth: LIST_PANEL.max }}
+            >
+              {sidebarNode}
+            </div>
+          )}
+          {!listCollapsed && <ResizeRail label="Изменить ширину списка чатов" onPointerDown={startListResize} />}
+          <div className="h-full min-w-0 flex-1 overflow-hidden">
+            {centerNode}
+          </div>
+          {!correctorCollapsed && <ResizeRail label="Изменить ширину панели разбора" onPointerDown={startCorrectorResize} />}
+          {!correctorCollapsed && (
+            <div
+              className={`h-full shrink-0 overflow-hidden ${panelMotion}`}
+              style={{ width: correctorWidth, minWidth: CORRECTOR_PANEL.min, maxWidth: CORRECTOR_PANEL.max }}
+            >
+              {correctorNode}
+            </div>
+          )}
+        </div>
+
+      )}
+
+      <ProfileSettings open={profileOpen} onClose={() => setProfileOpen(false)} state={profile} onSave={setProfile} />
+      <ProviderSettings open={providerOpen} onClose={() => setProviderOpen(false)} state={provider} onSave={setProvider} />
+      <ChatSettings open={chatSettingsOpen} onClose={() => setChatSettingsOpen(false)}
+        persona={persona} onSave={savePersona} onDelete={deletePersona} />
+      <NewChatModal open={newChatOpen} onClose={() => setNewChatOpen(false)} onCreate={createPersona} />
+    </main>
+  );
+}
